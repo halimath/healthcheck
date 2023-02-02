@@ -1,0 +1,6 @@
+github.com/halimath/expect-go v0.0.0-20230127172021-61f8c8d83d1f h1:W5dzPjOrom58DLTAEcxGCBdtfWBB4T+ZH7lgKthDKzA=
+github.com/halimath/expect-go v0.0.0-20230127172021-61f8c8d83d1f/go.mod h1:dPhpqW+qRVgNwCJ0ih8AQGbNLayhJiq+3pihyJ0bp2E=
+github.com/halimath/fixture v0.0.0-20221215105116-f87322a1d687 h1:vIHWRLQCjnlmT8lFBNo0s69ynGCN1AKuyxiMeRnyDWU=
+github.com/halimath/fixture v0.0.0-20221215105116-f87322a1d687/go.mod h1:axHE2XMjyZT+HirevPUr5CX3XF09sKU8Otnf9MqGAq0=
+golang.org/x/sync v0.1.0 h1:wsuoTGHzEhffawBOhz5CYhcrV4IdKZbEyZjBMuTp12o=
+golang.org/x/sync v0.1.0/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
