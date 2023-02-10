@@ -5,6 +5,8 @@ package healthcheck
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -24,6 +26,67 @@ type Check interface {
 type CheckFunc func(context.Context) error
 
 func (f CheckFunc) Check(ctx context.Context) error { return f(ctx) }
+
+// --
+
+var ErrURLCheckFailed = errors.New("URL check failed")
+
+// CheckURL creates a Check that checks url for a status code < 400. The returned
+// check uses http.DefaultClient to issue the HTTP request.
+// Use CheckHTTPResponse when custom handling is needed.
+func CheckURL(url string) Check {
+	return CheckHTTPResponse(http.MethodGet, url, nil)
+}
+
+// CheckHTTPResponse creates a Check that issues a HTTP request with method to
+// url using client. The check reports an error if either the request fails or
+// the received status code is >= 400 (bad request).
+// If client is nil http.DefaultClient is used.
+func CheckHTTPResponse(method, url string, client *http.Client) Check {
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	return CheckFunc(func(ctx context.Context) error {
+		req, err := http.NewRequestWithContext(ctx, method, url, nil)
+		if err != nil {
+			return fmt.Errorf("%w: failed to create http request for %s %s: %s", ErrURLCheckFailed, method, url, err)
+		}
+
+		res, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("%w: failed to issue http request for %s %s: %s", ErrURLCheckFailed, method, url, err)
+		}
+
+		if res.StatusCode >= http.StatusBadRequest {
+			return fmt.Errorf("%w: got failing status code for %s %s: %d", ErrURLCheckFailed, method, url, res.StatusCode)
+		}
+
+		return nil
+	})
+}
+
+var ErrPingCheckFailed = errors.New("ping check failed")
+
+// Pinger defines the interface for connection types that support pinging the
+// remote endpoint to learn about its liveness. The method name is chosen to
+// make a value of type *sql.DB satisfy this interface without any adaption.
+type Pinger interface {
+	// PingContext pings the remote endpoint. It returns nil if the endpoint is
+	// healthy, a non-nil error otherwise.
+	PingContext(context.Context) error
+}
+
+// CheckPing creates a Check that calls PingContext to check for connectivity.
+// This method can directly be used on a *sql.DB.
+func CheckPing(pinger Pinger) Check {
+	return CheckFunc(func(ctx context.Context) error {
+		if err := pinger.PingContext(ctx); err != nil {
+			return fmt.Errorf("%w: %s", ErrPingCheckFailed, err)
+		}
+		return nil
+	})
+}
 
 // --
 
@@ -81,6 +144,10 @@ func (h *Handler) AddCheck(c Check) {
 
 // EnableInfo enables an info endpoint that outputs version information and additional details.
 func (h *Handler) EnableInfo(infoData map[string]any) {
+	if infoData == nil {
+		infoData = make(map[string]any)
+	}
+
 	info, ok := debug.ReadBuildInfo()
 	if ok {
 		infoData["version"] = info.Main.Version
