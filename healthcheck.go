@@ -1,5 +1,13 @@
-// Package healthcheck provides some types and functions to implement liveness
-// and readyness checks based on HTTP probes.
+// Package healthcheck provides types and functions to implement liveness
+// and readyness checks based on HTTP probes. The package provides a
+// http.Handler that can be mounted using to a running server. Client code can
+// register checks to be executed when the readyness endpoint is invoked.
+// The package also provides ready to use checks for HTTP endpoints and SQL
+// databases.
+//
+// The handler also reports version information of the running application. This
+// is an opt-in feature disabled by default. The version info will be gathered
+// using the runtime/debug and can be enhanced with custom fields.
 package healthcheck
 
 import (
@@ -11,6 +19,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -50,16 +59,19 @@ func CheckHTTPResponse(method, url string, client *http.Client) Check {
 	return CheckFunc(func(ctx context.Context) error {
 		req, err := http.NewRequestWithContext(ctx, method, url, nil)
 		if err != nil {
-			return fmt.Errorf("%w: failed to create http request for %s %s: %s", ErrURLCheckFailed, method, url, err)
+			return fmt.Errorf("%w: failed to create http request for %s %s: %s",
+				ErrURLCheckFailed, method, url, err)
 		}
 
 		res, err := client.Do(req)
 		if err != nil {
-			return fmt.Errorf("%w: failed to issue http request for %s %s: %s", ErrURLCheckFailed, method, url, err)
+			return fmt.Errorf("%w: failed to issue http request for %s %s: %s",
+				ErrURLCheckFailed, method, url, err)
 		}
 
 		if res.StatusCode >= http.StatusBadRequest {
-			return fmt.Errorf("%w: got failing status code for %s %s: %d", ErrURLCheckFailed, method, url, res.StatusCode)
+			return fmt.Errorf("%w: got failing status code for %s %s: %d",
+				ErrURLCheckFailed, method, url, res.StatusCode)
 		}
 
 		return nil
@@ -90,37 +102,69 @@ func CheckPing(pinger Pinger) Check {
 
 // --
 
-// ErrorLogFunc defines a type for a function to log errors that occured during ready check execution.
-// err is the error returned by the check function.
-type ErrorLogFunc func(err error)
+// ErrorLogger defines a type for a function to log errors that occured during
+// ready check execution. err is the error returned by the check function.
+type ErrorLogger func(err error)
 
 // --
 
 var (
-	// Configures the final path element of the URL serving the liveness check. Changes to this variable will only take effect when done before calling New.
+	// Configures the final path element of the URL serving the liveness check.
+	// Changes to this variable will only take effect when done before calling New.
 	LivePath = "/livez"
-	// Configures the final path element of the URL serving the readyness check. Changes to this variable will only take effect when done before calling New.
+	// Configures the final path element of the URL serving the readyness check.
+	// Changes to this variable will only take effect when done before calling New.
 	ReadyPath = "/readyz"
-	// Configures the final path element of the URL serving the info endpoint. Changes to this variable will only take effect when done before calling New.
+	// Configures the final path element of the URL serving the info endpoint.
+	// Changes to this variable will only take effect when done before calling New.
 	InfoPath = "/infoz"
+
+	// Default timeout to apply to readyness checks
+	DefaultReadynessCheckTimeout = 10 * time.Second
 )
+
+// Option defines a function type used to customize the provided Handler.
+type Option func(*Handler)
+
+// WithErrorLogger creates an Option that sets Handler.ErrorLogger to l.
+func WithErrorLogger(l ErrorLogger) Option {
+	return func(h *Handler) {
+		h.ErrorLogger = l
+	}
+}
+
+// WithReadynessTimeout creates an Option that sets Handler.ReadynessTimeout to
+// t.
+func WithReadynessTimeout(t time.Duration) Option {
+	return func(h *Handler) {
+		h.ReadynessTimeout = t
+	}
+}
 
 // Handler implements liveness and readyness checking.
 type Handler struct {
-	errorLogFunc ErrorLogFunc
-	checks       []Check
-	lock         sync.RWMutex
-	mux          http.ServeMux
-	infoPayload  []byte
+	ErrorLogger      ErrorLogger
+	ReadynessTimeout time.Duration
+
+	checks      []Check
+	lock        sync.RWMutex
+	mux         http.ServeMux
+	infoPayload []byte
 }
 
 // New creates a new Handler ready to use. The Handler must be
 // mounted on some HTTP path (i.e. on a http.ServeMux) to receive
 // requests.
-func New(errorLogFunc ErrorLogFunc) *Handler {
+func New(opts ...Option) *Handler {
 	h := &Handler{
-		errorLogFunc: errorLogFunc,
-		mux:          *http.NewServeMux(),
+		mux:              *http.NewServeMux(),
+		ReadynessTimeout: DefaultReadynessCheckTimeout,
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
 	}
 
 	h.mux.HandleFunc(LivePath, h.handleLive)
@@ -142,7 +186,38 @@ func (h *Handler) AddCheck(c Check) {
 	h.checks = append(h.checks, c)
 }
 
-// EnableInfo enables an info endpoint that outputs version information and additional details.
+// ExecuteReadyChecks executes all readyness checks in parallel. It reports the
+// first error hit or nil if all checks pass. Every check is executed with a
+// timeout configured for the handler (if any).
+func (h *Handler) ExecuteReadyChecks(ctx context.Context) error {
+	h.lock.RLock()
+	defer h.lock.RUnlock()
+
+	if h.ReadynessTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.ReadynessTimeout)
+		defer cancel()
+	}
+
+	eg, ctx := errgroup.WithContext(ctx)
+
+	for _, c := range h.checks {
+		c := c
+		eg.Go(func() error { return c.Check(ctx) })
+	}
+
+	if err := eg.Wait(); err != nil {
+		if h.ErrorLogger != nil {
+			h.ErrorLogger(err)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// EnableInfo enables an info endpoint that outputs version information and
+// additional details.
 func (h *Handler) EnableInfo(infoData map[string]any) {
 	if infoData == nil {
 		infoData = make(map[string]any)
@@ -177,24 +252,9 @@ func (h *Handler) handleLive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleReady(w http.ResponseWriter, r *http.Request) {
-	h.lock.RLock()
-	defer h.lock.RUnlock()
-
-	eg, ctx := errgroup.WithContext(r.Context())
-
-	for _, c := range h.checks {
-		c := c
-		eg.Go(func() error { return c.Check(ctx) })
-	}
-
-	if err := eg.Wait(); err != nil {
-		if h.errorLogFunc != nil {
-			h.errorLogFunc(err)
-		}
+	if err := h.ExecuteReadyChecks(r.Context()); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		return
 	}
-
 	w.WriteHeader(http.StatusNoContent)
 }
 

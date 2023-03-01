@@ -32,7 +32,7 @@ mounted to any multiplexer supporting the go standard library handler interface.
 See this minimal example
 
 ```go
-h := healthcheck.New(nil)
+h := healthcheck.New()
 
 h.AddCheck(healthcheck.CheckURL("http://localhost:1234/"))
 h.AddCheckFunc(func(ctx context.Context) error {
@@ -44,6 +44,16 @@ http.Handle("/health/", http.StripPrefix("/health", h))
 
 log.Fatal(http.ListenAndServe(":8080", nil))
 ```
+
+## Options
+
+`healthcheck.New` accepts `Options` that customize the handler`s behavior. Two
+factory functions are provided:
+
+* `healthcheck.WithErrorLogger` lets you provide a function to log or otherwise
+  treat any `error` received from a readyness check.
+* `healthcheck.WithReadynessTimeout` sets a timeout to apply to all readyness
+  checks (the default is 10 seconds).
 
 ## Bundled checks
 

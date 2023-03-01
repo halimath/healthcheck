@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	. "github.com/halimath/expect-go"
 	. "github.com/halimath/fixture"
@@ -17,7 +18,7 @@ type handlerFixture struct {
 }
 
 func (h *handlerFixture) BeforeAll(t *testing.T) error {
-	h.handler = New(nil)
+	h.handler = New()
 	return nil
 }
 
@@ -48,17 +49,60 @@ func (h *handlerFixture) InfoRequest() ([]byte, int) {
 	return w.Body.Bytes(), w.Result().StatusCode
 }
 
+func TestHandler_ExecuteReadyChecks(t *testing.T) {
+	With(t, new(handlerFixture)).
+		Run("noCheck", func(t *testing.T, f *handlerFixture) {
+			err := f.handler.ExecuteReadyChecks(context.Background())
+			ExpectThat(t, err).Is(NoError())
+		}).
+		Run("singleSuccessfulCheck", func(t *testing.T, f *handlerFixture) {
+			f.handler.AddCheckFunc(func(context.Context) error { return nil })
+			err := f.handler.ExecuteReadyChecks(context.Background())
+			ExpectThat(t, err).Is(NoError())
+		}).
+		Run("failingCheck", func(t *testing.T, f *handlerFixture) {
+			want := errors.New("failed")
+			f.handler.AddCheckFunc(func(context.Context) error { return want })
+			err := f.handler.ExecuteReadyChecks(context.Background())
+			ExpectThat(t, err).Is(Error(want))
+		})
+}
+
+func TestHandler_ExecuteReadyChecks_withTimeout(t *testing.T) {
+	h := New(WithReadynessTimeout(time.Millisecond))
+
+	h.AddCheckFunc(func(context.Context) error {
+		time.Sleep(10 * time.Millisecond)
+		return nil
+	})
+
+	err := h.ExecuteReadyChecks(context.Background())
+	ExpectThat(t, err).Is(Error(context.DeadlineExceeded))
+}
+
+func TestHandler_ExecuteReadyChecks_withErrorLogger(t *testing.T) {
+	var err error
+	h := New(WithErrorLogger(func(e error) {
+		err = e
+	}))
+
+	want := errors.New("caboom")
+
+	h.AddCheckFunc(func(context.Context) error {
+		return want
+	})
+
+	h.ExecuteReadyChecks(context.Background())
+	ExpectThat(t, err).Is(Error(want))
+}
+
 func TestHandler(t *testing.T) {
 	With(t, new(handlerFixture)).
 		Run("liveness", func(t *testing.T, f *handlerFixture) {
 			got := f.LivenessRequest()
 			ExpectThat(t, got).Is(Equal(http.StatusNoContent))
 		}).
-		Run("readyness_noCheck", func(t *testing.T, f *handlerFixture) {
-			got := f.ReadynessRequest()
-			ExpectThat(t, got).Is(Equal(http.StatusNoContent))
-		}).
-		Run("readyness_singleSuccessfulCheck", func(t *testing.T, f *handlerFixture) {
+		Run("readyness_successfulCheck", func(t *testing.T, f *handlerFixture) {
 			f.handler.AddCheckFunc(func(context.Context) error { return nil })
 			got := f.ReadynessRequest()
 			ExpectThat(t, got).Is(Equal(http.StatusNoContent))
