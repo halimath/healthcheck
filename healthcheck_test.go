@@ -71,9 +71,15 @@ func TestHandler_ExecuteReadyChecks(t *testing.T) {
 func TestHandler_ExecuteReadyChecks_withTimeout(t *testing.T) {
 	h := New(WithReadynessTimeout(time.Millisecond))
 
-	h.AddCheckFunc(func(context.Context) error {
-		time.Sleep(10 * time.Millisecond)
-		return nil
+	h.AddCheckFunc(func(ctx context.Context) error {
+		t := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return ctx.Err()
+		case <-t.C:
+			return nil
+		}
 	})
 
 	err := h.ExecuteReadyChecks(context.Background())
