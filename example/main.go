@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	h := healthcheck.New(nil)
+	h := healthcheck.New()
 
 	h.AddCheck(healthcheck.CheckURL("http://localhost:1234/"))
 	h.AddCheckFunc(func(ctx context.Context) error {
