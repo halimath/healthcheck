@@ -261,7 +261,7 @@ func (h *Handler) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	w.Header().Set("Content-Lengt", strconv.Itoa(len(h.infoPayload)))
+	w.Header().Set("Content-Length", strconv.Itoa(len(h.infoPayload)))
 	w.WriteHeader(http.StatusOK)
 	w.Write(h.infoPayload)
 }
