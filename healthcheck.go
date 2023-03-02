@@ -254,6 +254,7 @@ func (h *Handler) handleLive(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleReady(w http.ResponseWriter, r *http.Request) {
 	if err := h.ExecuteReadyChecks(r.Context()); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
