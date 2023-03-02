@@ -14,8 +14,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.18', '1.19']
+        os: [ubuntu-latest, macos-latest]
+        go: ['1.18', '1.19', '1.20']
     env:
       VERBOSE: 1
       GOFLAGS: -mod=readonly
